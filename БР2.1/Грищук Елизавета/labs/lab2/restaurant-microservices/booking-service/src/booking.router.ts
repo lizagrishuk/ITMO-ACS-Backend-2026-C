@@ -3,6 +3,7 @@ import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import { AppDataSource } from './data-source';
 import { Booking } from './booking.entity';
+import { publishBookingCreated } from './rabbitmq';
 
 const router = Router();
 const bookingRepo = () => AppDataSource.getRepository(Booking);
@@ -40,14 +41,12 @@ router.post('/', async (req: Request, res: Response) => {
         return res.status(400).json({ message: 'table_id, booking_time и guests_count обязательны' });
     }
 
-    // Проверяем пользователя в auth-service
     try {
         await axios.get(`${AUTH_SERVICE_URL}/internal/users/${userId}`);
     } catch {
         return res.status(404).json({ message: 'Пользователь не найден' });
     }
 
-    // Проверяем столик в restaurant-service
     let table: any;
     try {
         const response = await axios.get(`${RESTAURANT_SERVICE_URL}/internal/tables/${table_id}`);
@@ -83,6 +82,15 @@ router.post('/', async (req: Request, res: Response) => {
         status: 'pending',
     });
     await bookingRepo().save(booking);
+
+    // Публикуем событие в RabbitMQ
+    await publishBookingCreated({
+        bookingId: booking.id,
+        userId: booking.userId,
+        tableId: booking.tableId,
+        bookingTime: booking.bookingTime,
+        guestsCount: booking.guestsCount,
+    });
 
     return res.status(201).json(booking);
 });
